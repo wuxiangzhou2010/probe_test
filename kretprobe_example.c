@@ -32,6 +32,12 @@ static char func_name[NAME_MAX] = "sys_clone,sys_getpid,sys_getppid";
 static int count=1; //cout of probe
 static char list[20][255];
 int i=0,j=0;
+struct s_list{
+	char *fun;
+	 unsigned long called_average;
+	 unsigned long long called_count;
+};
+struct s_list listall[20];
 
 static struct kretprobe my_kretprobe[10];
 static struct kretprobe *p_kretprobe;
@@ -47,10 +53,12 @@ int j=0;
 	while(*ar!='\0')
 	{
         list[i][j] = *ar;
+		//listall[i].fun[j]=*ar;
 		if(*ar ==',')
 		{
 			count++;
             list[i][j] = '\0';//one func is end 
+          //  listall[i].fun[j]= '\0';//one func is end 
             i++;
             j=0;
             ar++;
@@ -63,6 +71,7 @@ int j=0;
 	}
 	ar = NULL;
     list[i][j]='\0';
+   // listall[i].fun[j]= '\0';//one func is end 
 	
 	printk(KERN_INFO "number of probe is %d \n", count);
 
@@ -70,12 +79,29 @@ int j=0;
     {
 
         printk(KERN_INFO "list: = %s\n",list[i]);
+		listall[i].called_average=0;
+		listall[i].called_count = 0;
+		listall[i].fun= list[i];
+        printk(KERN_INFO "listall[%d]: = %s\n",i,listall[i].fun);
 
      }       
      return 0;
-
 }
 
+int strcmp__( const  char *a,  char *b)
+{
+	/* This implementation is buggy: it never returns -1. */
+	while (*a || *b) {
+		if (*a != *b)
+			return 1;
+		if (*a == 0 || *b == 0)
+			return 1;
+		a++;
+		b++;
+	}
+
+	return 0;
+}
 			
 /* per-instance private data */
 struct my_data {
@@ -108,44 +134,52 @@ static int ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	now = ktime_get();
 	delta = ktime_to_ns(ktime_sub(now, data->entry_stamp));
-	//called_count++;//called one more time 
-	//called_average = (long long)(((delta - called_average)/called_count)+ called_average);
-	//printk(KERN_INFO "%s:%lld:%lld\n",ri->rp->kp.symbol_name, called_average, called_count);
-	printk(KERN_INFO "%s:%lld\n",ri->rp->kp.symbol_name,delta);
+	//printk(KERN_INFO "%s,%d\n",__FUNCTION__,__LINE__);
+
+	for(i=0;i<count;i++)
+	{
+		if(!strcmp__(ri->rp->kp.symbol_name,listall[i].fun))
+		{
+			unsigned long long a, b;
+			
+			listall[i].called_count++;//called one more time 
+			// listall[i].called_average = (unsigned long)(((delta - listall[i].called_average)/listall[i].called_count)+ listall[i].called_average);
+			a=(delta + listall[i].called_average*(listall[i].called_count-1));
+			b=listall[i].called_count;
+			do_div(a,b);//32bit arc is different http://www.crifan.com/resolved_undefined_reference_to___udivdi3/
+			listall[i].called_average =a;
+			// listall[i].called_average = ((delta + listall[i].called_average*(listall[i].called_count-1))/listall[i].called_count);
+			printk(KERN_INFO "%s:%lu:%llu\n",
+					ri->rp->kp.symbol_name, listall[i].called_average, listall[i].called_count);
+			break;
+		}
+		
+	}
+	//printk(KERN_INFO "%s:%lld\n",ri->rp->kp.symbol_name,delta);
 	return 0;
 }
 
 static int __init kretprobe_init(void)
 {
 	int ret;
-	
-	
 	get_the_probe_num(func_name);
-	i= count;//kretprobe array size
-	j=0;
 	printk(KERN_INFO "%s,%d\n",__FUNCTION__,__LINE__);
-	while(i--)// construct the  kretprobe array 
+	for(i=0;i<count;i++)// construct the  kretprobe array 
 	{
-		my_kretprobe[j].handler= ret_handler;
-		my_kretprobe[j].entry_handler= entry_handler;
-		my_kretprobe[j].data_size= sizeof(struct my_data);
-		my_kretprobe[j].maxactive= 20;
-		my_kretprobe[j].kp.symbol_name = list[j];
-		j++;
+		my_kretprobe[i].handler= ret_handler;
+		my_kretprobe[i].entry_handler= entry_handler;
+		my_kretprobe[i].data_size= sizeof(struct my_data);
+		my_kretprobe[i].maxactive= 20;
+		my_kretprobe[i].kp.symbol_name = list[i];
 		
 		printk(KERN_INFO "%s,%d\n",__FUNCTION__,__LINE__);
 	}
-	 j=0;
 	for(i = 0;i<count;i++)
 	{
-		printk(KERN_INFO "my_kretprobe[%d]:symbol_name:%s\n",i,my_kretprobe[j].kp.symbol_name);
-		j++;
+		printk(KERN_INFO "my_kretprobe[%d]:symbol_name:%s\n",i,my_kretprobe[i].kp.symbol_name);
 	}
 	p_kretprobe = my_kretprobe;
 
-	// test code
-	// printk(KERN_INFO "%p\n",&p_kretprobe);
-	// printk(KERN_INFO "%p\n",p_kretprobe);
 	
 	for(i = 0;i<count;i++)
 	{
@@ -156,9 +190,9 @@ static int __init kretprobe_init(void)
 				ret);
 		return -1;
 	}
-		printk(KERN_INFO "____p_kretprobe[%d]:symbol_name:%s\n"
+		printk(KERN_INFO "[%d]:symbol_name:%s\n"
 				,i,p_kretprobe[i].kp.symbol_name);
-		printk(KERN_INFO "______%s,%d\n",__FUNCTION__,__LINE__);
+		printk(KERN_INFO "%s,%d\n",__FUNCTION__,__LINE__);
 	}
 	
 	
