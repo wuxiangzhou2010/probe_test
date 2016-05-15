@@ -25,17 +25,58 @@
 #include <linux/limits.h>
 #include <linux/sched.h>
 
-static char func_name[NAME_MAX] = "sys_clone";
+static char func_name[NAME_MAX] = "sys_clone,sys_getpid,sys_getppid";
 
-static long long int average = 0;// for the average duration 
-static long long int count = 0;//for all the func that is called 
+// static long long int called_average = 0;// for the average duration 
+// static long long int called_count = 0;//for all the func that is called 
+static int count=1; //cout of probe
+static char list[20][255];
+int i=0,j=0;
 
-
-//static char func_name[NAME_MAX] = "getppid";
+static struct kretprobe my_kretprobe[10];
+static struct kretprobe *p_kretprobe;
 module_param_string(func, func_name, NAME_MAX, S_IRUGO);
 MODULE_PARM_DESC(func, "Function to kretprobe; this module will report the"
 			" function's execution time");
+int get_the_probe_num(char  *arg)
+{
+char *ar = arg;
+int i =0;
+int j=0;
 
+	while(*ar!='\0')
+	{
+        list[i][j] = *ar;
+		if(*ar ==',')
+		{
+			count++;
+            list[i][j] = '\0';//one func is end 
+            i++;
+            j=0;
+            ar++;
+		}
+        else
+        {
+            ar++;
+            j++;
+        }
+	}
+	ar = NULL;
+    list[i][j]='\0';
+	
+	printk(KERN_INFO "number of probe is %d \n", count);
+
+    for(i=0;i<count;i++)
+    {
+
+        printk(KERN_INFO "list: = %s\n",list[i]);
+
+     }       
+     return 0;
+
+}
+
+			
 /* per-instance private data */
 struct my_data {
 	ktime_t entry_stamp;
@@ -67,46 +108,83 @@ static int ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	now = ktime_get();
 	delta = ktime_to_ns(ktime_sub(now, data->entry_stamp));
-	count++;//called one more time 
-	average = (long long)(((delta - average)/count)+ average);
-	printk(KERN_INFO "%s:%lld:%lld\n",
-			func_name, average, count);
+	//called_count++;//called one more time 
+	//called_average = (long long)(((delta - called_average)/called_count)+ called_average);
+	//printk(KERN_INFO "%s:%lld:%lld\n",ri->rp->kp.symbol_name, called_average, called_count);
+	printk(KERN_INFO "%s:%lld\n",ri->rp->kp.symbol_name,delta);
 	return 0;
 }
-
-static struct kretprobe my_kretprobe = {
-	.handler		= ret_handler,
-	.entry_handler		= entry_handler,
-	.data_size		= sizeof(struct my_data),
-	/* Probe up to 20 instances concurrently. */
-	.maxactive		= 20,
-};
 
 static int __init kretprobe_init(void)
 {
 	int ret;
+	
+	
+	get_the_probe_num(func_name);
+	i= count;//kretprobe array size
+	j=0;
+	printk(KERN_INFO "%s,%d\n",__FUNCTION__,__LINE__);
+	while(i--)// construct the  kretprobe array 
+	{
+		my_kretprobe[j].handler= ret_handler;
+		my_kretprobe[j].entry_handler= entry_handler;
+		my_kretprobe[j].data_size= sizeof(struct my_data);
+		my_kretprobe[j].maxactive= 20;
+		my_kretprobe[j].kp.symbol_name = list[j];
+		j++;
+		
+		printk(KERN_INFO "%s,%d\n",__FUNCTION__,__LINE__);
+	}
+	 j=0;
+	for(i = 0;i<count;i++)
+	{
+		printk(KERN_INFO "my_kretprobe[%d]:symbol_name:%s\n",i,my_kretprobe[j].kp.symbol_name);
+		j++;
+	}
+	p_kretprobe = my_kretprobe;
 
-	my_kretprobe.kp.symbol_name = func_name;
-	ret = register_kretprobe(&my_kretprobe);
-	if (ret < 0) {
+	// test code
+	// printk(KERN_INFO "%p\n",&p_kretprobe);
+	// printk(KERN_INFO "%p\n",p_kretprobe);
+	
+	for(i = 0;i<count;i++)
+	{
+		ret = register_kretprobe(&p_kretprobe[i]);
+		
+		if (ret < 0) {
 		printk(KERN_INFO "register_kretprobe failed, returned %d\n",
 				ret);
 		return -1;
 	}
+		printk(KERN_INFO "____p_kretprobe[%d]:symbol_name:%s\n"
+				,i,p_kretprobe[i].kp.symbol_name);
+		printk(KERN_INFO "______%s,%d\n",__FUNCTION__,__LINE__);
+	}
+	
+	
+	i =count;
+	j=0;
+	while(i--)
+	{
 	printk(KERN_INFO "Planted return probe at %s: %p\n",
-			my_kretprobe.kp.symbol_name, my_kretprobe.kp.addr);
+			my_kretprobe[j].kp.symbol_name, my_kretprobe[j].kp.addr);
+	j++;
+	}
 	return 0;
 }
 
 static void __exit kretprobe_exit(void)
 {
-	unregister_kretprobe(&my_kretprobe);
-	printk(KERN_INFO "kretprobe at %p unregistered\n",
-			my_kretprobe.kp.addr);
 
-	/* nmissed > 0 suggests that maxactive was set too low. */
-	printk(KERN_INFO "Missed probing %d instances of %s\n",
-		my_kretprobe.nmissed, my_kretprobe.kp.symbol_name);
+for(i=0;i<count;i++)
+	{
+		unregister_kretprobe(&p_kretprobe[i]);
+		printk(KERN_INFO "kretprobe at %p unregistered\n", 
+				p_kretprobe[i].kp.addr);
+		/* nmissed > 0 suggests that maxactive was set too low. */
+		printk(KERN_INFO "Missed probing %d instances of %s\n",
+			p_kretprobe[i].nmissed, p_kretprobe[i].kp.symbol_name);
+	}
 }
 
 module_init(kretprobe_init)
