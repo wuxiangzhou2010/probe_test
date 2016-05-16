@@ -26,9 +26,6 @@
 #include <linux/sched.h>
 
 static char func_name[NAME_MAX] = "sys_clone,sys_getpid,sys_getppid";
-
-// static long long int called_average = 0;// for the average duration 
-// static long long int called_count = 0;//for all the func that is called 
 static int count=1; //cout of probe
 static char list[20][255];
 int i=0,j=0;
